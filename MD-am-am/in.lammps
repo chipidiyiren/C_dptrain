@@ -1,0 +1,80 @@
+units         metal
+boundary      p p p
+atom_style    atomic
+neighbor	  2 bin
+timestep      0.001
+
+#读取data文件
+read_restart	../../restart.equil
+
+read_data ../r.lmp add append offset 0 0 0 0 0 shift 0 0 50
+
+#增加z方向尺寸
+change_box all z delta 0 50 units box
+
+#金刚石球建模
+#lattice       diamond  3.52
+region        box  block  -4 40 -4 40 30 90 units box #x y z r 
+#create_atoms  1 region ball
+
+#设置区域和原子组
+region        boundary block INF INF INF INF INF 4 units box
+region		  piece  block INF INF INF INF 4 25 units box
+group         boundary region boundary
+group         piece region piece
+group		  box region box
+
+#定义计算相关信息,固定原子
+compute    1 piece temp
+velocity   boundary set 0 0 0
+fix        b boundary setforce 0 0 0 
+
+#定义原子间相互作用势
+pair_style     deepmd ../../../c_compress.pb out_file md.out out_freq 10
+pair_coeff     * *
+#pair_coeff     * * tersoff SiC.tersoff NULL NULL NULL NULL NULL C
+#pair_coeff     1 6 lj/cut 0.038687 2.8605
+#pair_coeff     2 6 lj/cut 0.038429 2.841
+#pair_coeff     3 6 lj/cut 0.037758 2.868
+#pair_coeff     4 6 lj/cut 0.038281 2.842
+#pair_coeff     5 6 lj/cut 0.003457 3.1325
+
+#热力输出
+thermo			100
+thermo_style	custom step temp ke pe 
+
+#压头快速移动到工件表面
+displace_atoms  box move 0 0 -20 units box
+
+#压头下压
+dump			1 all custom 100 movedown.xyz id type x y z
+velocity		box set 0 0 -1 units box
+fix				10 box nve/noforce
+fix				20 piece nvt temp 10 10 0.1
+run				9000
+undump			1
+unfix			10
+unfix			20
+reset_timestep	0
+
+#摩擦力计算
+compute			fx0 box reduce sum fx
+compute			fy0 box reduce sum fy
+compute			fz0 box reduce sum fz
+variable 		fxx equal c_fx0
+variable 		fyy equal -c_fy0
+variable 		fzz equal c_fz0
+variable        distance equal step/1000
+fix def3 all print 100 "${distance} ${fxx} ${fyy} ${fzz}" file friction.txt screen no
+
+#摩擦过程
+dump			1 all custom 1000 frc.xyz id type x y z
+velocity		box set 0 1 0 units box
+fix				10 box nve/noforce
+fix				20 piece nvt temp 10 10 0.1
+run  500000
+
+unfix 10
+unfix 20
+#unfix 30
+undump 1
